@@ -82,36 +82,44 @@ struct ReportsScreen: View {
                     .foregroundStyle(.secondary)
             }
             ForEach(activeMonths) { summary in
-                VStack(alignment: .leading, spacing: 6) {
-                    HStack {
-                        Text(summary.monthName)
-                            .font(.body.weight(.medium))
-                        Spacer()
-                        if summary.receivedMinor < summary.billedMinor {
-                            Image(systemName: "exclamationmark.triangle.fill")
-                                .foregroundStyle(.orange)
-                                .font(.caption)
-                                .accessibilityLabel("Payments behind billing")
+                NavigationLink {
+                    MonthPaymentsView(month: monthDate(of: summary))
+                } label: {
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack {
+                            Text(summary.monthName)
+                                .font(.body.weight(.medium))
+                            Spacer()
+                            if summary.receivedMinor < summary.billedMinor {
+                                Image(systemName: "exclamationmark.triangle.fill")
+                                    .foregroundStyle(.orange)
+                                    .font(.caption)
+                                    .accessibilityLabel("Payments behind billing")
+                            }
                         }
-                    }
-                    HStack {
-                        Text("\(summary.completedCount) completed · \(summary.missedCount) missed")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        Spacer()
-                        VStack(alignment: .trailing, spacing: 2) {
-                            Text("Billed \(Money.format(summary.billedMinor))")
+                        HStack {
+                            Text("\(summary.completedCount) completed · \(summary.missedCount) missed")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
-                            Text("Received \(Money.format(summary.receivedMinor))")
-                                .font(.caption.weight(.medium))
-                                .foregroundStyle(summary.receivedMinor >= summary.billedMinor ? .green : .orange)
+                            Spacer()
+                            VStack(alignment: .trailing, spacing: 2) {
+                                Text("Billed \(Money.format(summary.billedMinor))")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                Text("Received \(Money.format(summary.receivedMinor))")
+                                    .font(.caption.weight(.medium))
+                                    .foregroundStyle(summary.receivedMinor >= summary.billedMinor ? .green : .orange)
+                            }
                         }
                     }
+                    .padding(.vertical, 2)
                 }
-                .padding(.vertical, 2)
             }
         }
+    }
+
+    private func monthDate(of summary: MonthSummary) -> Date {
+        Calendar.current.date(from: DateComponents(year: summary.year, month: summary.month, day: 1)) ?? .now
     }
 
     private var debtsSection: some View {

@@ -34,7 +34,8 @@ struct MonthGrid: View {
     var body: some View {
         VStack(spacing: 4) {
             HStack {
-                ForEach(weekdaySymbols, id: \.self) { symbol in
+                // veryShortWeekdaySymbols repeat ("S", "T"), so key by position.
+                ForEach(Array(weekdaySymbols.enumerated()), id: \.offset) { _, symbol in
                     Text(symbol)
                         .font(.caption2.weight(.semibold))
                         .foregroundStyle(.secondary)

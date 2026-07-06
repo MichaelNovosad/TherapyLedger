@@ -39,13 +39,16 @@ final class TherapySession {
     var previousDates: [Date] = []
     var createdAt: Date = Date()
     var patient: Patient?
+    /// The recurring slot that generated this session, if any (v2, additive).
+    var slot: RecurringSlot?
 
-    init(patient: Patient?, scheduledAt: Date, durationMinutes: Int = 50, feeMinor: Int) {
+    init(patient: Patient?, scheduledAt: Date, durationMinutes: Int = 50, feeMinor: Int, slot: RecurringSlot? = nil) {
         self.patient = patient
         self.scheduledAt = scheduledAt
         self.durationMinutes = durationMinutes
         self.feeMinor = feeMinor
         self.createdAt = Date()
+        self.slot = slot
     }
 
     var status: SessionStatus {

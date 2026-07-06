@@ -43,7 +43,7 @@ struct BalanceChip: View {
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(.red)
         } else if balance.creditMinor > 0 {
-            Text("Credit \(Money.format(balance.creditMinor, currency: currency))")
+            Text("Prepaid \(Money.format(balance.creditMinor, currency: currency))")
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(.green)
         } else {
@@ -61,5 +61,31 @@ struct MoneyText: View {
     var body: some View {
         Text(Money.format(minor, currency: currency))
             .monospacedDigit()
+    }
+}
+
+/// Status badge that opens a status-change menu on tap — the one-tap way to
+/// mark a session completed/missed/cancelled without opening it.
+struct StatusMenuBadge: View {
+    @Bindable var session: TherapySession
+
+    var body: some View {
+        Menu {
+            ForEach(SessionStatus.allCases) { status in
+                Button {
+                    session.status = status
+                } label: {
+                    if session.status == status {
+                        Label(status.label, systemImage: "checkmark")
+                    } else {
+                        Label(status.label, systemImage: status.systemImage)
+                    }
+                }
+            }
+        } label: {
+            StatusBadge(status: session.status, wasRescheduled: session.wasRescheduled)
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Change status, currently \(session.status.label)")
     }
 }

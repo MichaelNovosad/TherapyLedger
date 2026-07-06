@@ -15,7 +15,7 @@ struct ScheduleGeneratorTests {
         let slot = RecurringSlot(weekday: 3, hour: 15, minute: 0, patient: patient)
         context.insert(slot)
 
-        let dates = ScheduleGenerator.nextDates(for: slot, from: start, weeksAhead: 3)
+        let dates = ScheduleGenerator.nextDates(for: slot, from: start, horizonDays: 21)
         #expect(dates.count == 3)
         let calendar = Calendar.current
         for slotDate in dates {
@@ -24,6 +24,51 @@ struct ScheduleGeneratorTests {
         }
         #expect(dates[0] == date(2026, 6, 2, 15))
         #expect(dates[1] == date(2026, 6, 9, 15))
+    }
+
+    @Test func dailySlotGeneratesEveryDay() throws {
+        let context = try makeInMemoryContext()
+        let patient = Patient(name: "Anna", sessionFeeMinor: 100_000)
+        context.insert(patient)
+        let slot = RecurringSlot(weekday: 1, hour: 9, minute: 0, patient: patient, frequency: .daily)
+        context.insert(slot)
+
+        let dates = ScheduleGenerator.nextDates(for: slot, from: start, horizonDays: 5)
+        #expect(dates.count == 5)
+        #expect(dates.first == date(2026, 6, 2, 9))
+        #expect(dates.last == date(2026, 6, 6, 9))
+    }
+
+    @Test func biweeklySlotSkipsAlternateWeeks() throws {
+        let context = try makeInMemoryContext()
+        let patient = Patient(name: "Anna", sessionFeeMinor: 100_000)
+        context.insert(patient)
+        let slot = RecurringSlot(
+            weekday: 3, hour: 15, minute: 0,
+            patient: patient,
+            frequency: .biweekly,
+            anchorDate: start
+        )
+        context.insert(slot)
+
+        let dates = ScheduleGenerator.nextDates(for: slot, from: start, horizonDays: 28)
+        #expect(dates == [date(2026, 6, 2, 15), date(2026, 6, 16, 15)])
+    }
+
+    @Test func monthlySlotLandsOnDayOfMonth() throws {
+        let context = try makeInMemoryContext()
+        let patient = Patient(name: "Anna", sessionFeeMinor: 100_000)
+        context.insert(patient)
+        let slot = RecurringSlot(
+            weekday: 1, hour: 10, minute: 0,
+            patient: patient,
+            frequency: .monthly,
+            dayOfMonth: 15
+        )
+        context.insert(slot)
+
+        let dates = ScheduleGenerator.nextDates(for: slot, from: start, horizonDays: 60)
+        #expect(dates == [date(2026, 6, 15, 10), date(2026, 7, 15, 10)])
     }
 
     @Test func planSkipsDaysWithExistingSessions() throws {
@@ -40,7 +85,7 @@ struct ScheduleGeneratorTests {
             slots: [slot],
             existingSessions: [existing],
             from: start,
-            weeksAhead: 2
+            horizonDays: 14
         )
         #expect(planned.count == 1)
         #expect(planned[0].date == date(2026, 6, 9, 15))
@@ -62,7 +107,7 @@ struct ScheduleGeneratorTests {
             slots: [slot],
             existingSessions: [moved],
             from: start,
-            weeksAhead: 2
+            horizonDays: 14
         )
         #expect(planned.count == 1)
         #expect(planned[0].date == date(2026, 6, 9, 15))
@@ -86,7 +131,7 @@ struct ScheduleGeneratorTests {
             slots: [pausedSlot, archivedSlot],
             existingSessions: [],
             from: start,
-            weeksAhead: 2
+            horizonDays: 14
         )
         #expect(planned.isEmpty)
     }

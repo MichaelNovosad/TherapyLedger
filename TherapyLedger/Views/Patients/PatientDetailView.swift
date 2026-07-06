@@ -7,7 +7,18 @@ struct PatientDetailView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var showingEditor = false
     @State private var showingSlotEditor = false
+    @State private var showingAddPayment = false
+    @State private var paymentToRelink: Payment?
     @State private var newAliasText = ""
+
+    // Filtered in memory: relationship-nil predicates are unreliable in
+    // SwiftData and made linked payments reappear as "needs linking".
+    @Query(sort: \Payment.date, order: .reverse)
+    private var allPayments: [Payment]
+
+    private var unlinkedPayments: [Payment] {
+        allPayments.filter { $0.patient == nil }
+    }
 
     private var recentSessions: [TherapySession] {
         patient.sessions
@@ -26,6 +37,8 @@ struct PatientDetailView: View {
     var body: some View {
         List {
             balanceSection
+            statisticsSection
+            needsLinkingSection
             slotsSection
             aliasesSection
             sessionsSection
@@ -45,6 +58,46 @@ struct PatientDetailView: View {
         .sheet(isPresented: $showingSlotEditor) {
             SlotEditorSheet(patient: patient)
         }
+        .sheet(isPresented: $showingAddPayment) {
+            PaymentEditorView(preselectedPatient: patient)
+        }
+        .sheet(item: $paymentToRelink) { payment in
+            LinkPaymentSheet(payment: payment)
+        }
+    }
+
+    @ViewBuilder
+    private var needsLinkingSection: some View {
+        if !unlinkedPayments.isEmpty {
+            Section {
+                ForEach(unlinkedPayments) { payment in
+                    HStack {
+                        PaymentRow(payment: payment)
+                        Menu {
+                            Button {
+                                PaymentLinker.link(payment, to: patient, rememberPayer: true, context: context)
+                            } label: {
+                                Label("Link & remember payer", systemImage: "person.badge.key")
+                            }
+                            Button {
+                                PaymentLinker.link(payment, to: patient, rememberPayer: false, context: context)
+                            } label: {
+                                Label("Link this payment only", systemImage: "link")
+                            }
+                        } label: {
+                            Text("Link")
+                                .font(.callout.weight(.semibold))
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.small)
+                    }
+                }
+            } header: {
+                Text("Needs linking (\(unlinkedPayments.count))")
+            } footer: {
+                Text("Incoming transfers that no payer alias matched. Linking with \"remember payer\" makes future transfers from this sender match \(patient.name) automatically.")
+            }
+        }
     }
 
     private var balanceSection: some View {
@@ -56,17 +109,21 @@ struct PatientDetailView: View {
             LabeledContent("Received") {
                 MoneyText(minor: balance.paidMinor, currency: patient.currencyCode)
             }
-            LabeledContent(balance.creditMinor > 0 ? "Credit" : "Debt") {
+            LabeledContent(balance.creditMinor > 0 ? "Prepaid" : "Debt") {
                 BalanceChip(balance: balance, currency: patient.currencyCode)
             }
         }
+    }
+
+    private var statisticsSection: some View {
+        PaymentTotalsSection(payments: patient.payments, currency: patient.currencyCode)
     }
 
     private var slotsSection: some View {
         Section {
             ForEach(patient.slots.sorted { ($0.weekday, $0.hour, $0.minute) < ($1.weekday, $1.hour, $1.minute) }) { slot in
                 HStack {
-                    Text("\(slot.weekdayName) \(slot.timeLabel)")
+                    Text(slot.scheduleLabel)
                     Spacer()
                     if !slot.isActive {
                         Text("Paused")
@@ -76,7 +133,7 @@ struct PatientDetailView: View {
                 }
                 .swipeActions {
                     Button(role: .destructive) {
-                        context.delete(slot)
+                        SchedulingService.delete(slot: slot, context: context)
                     } label: {
                         Label("Delete", systemImage: "trash")
                     }
@@ -93,12 +150,12 @@ struct PatientDetailView: View {
             Button {
                 showingSlotEditor = true
             } label: {
-                Label("Add weekly slot", systemImage: "plus")
+                Label("Add recurring slot", systemImage: "plus")
             }
         } header: {
-            Text("Weekly schedule")
+            Text("Recurring schedule")
         } footer: {
-            Text("Slots create sessions in the calendar four weeks ahead.")
+            Text("Slots create sessions in the calendar a year ahead; the window refills every time the app opens. Deleting a slot removes its future scheduled sessions; history is kept.")
         }
     }
 
@@ -156,19 +213,43 @@ struct PatientDetailView: View {
     }
 
     private var paymentsSection: some View {
-        Section("Recent payments") {
+        Section {
             if recentPayments.isEmpty {
                 Text("No payments yet")
                     .foregroundStyle(.secondary)
             }
             ForEach(recentPayments) { payment in
                 HStack {
-                    Text(payment.date.formatted(date: .abbreviated, time: .omitted))
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(payment.date.formatted(date: .abbreviated, time: .omitted))
+                        if let sender = payment.senderName {
+                            Text(sender)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
                     Spacer()
                     MoneyText(minor: payment.amountMinor, currency: payment.currencyCode)
                         .foregroundStyle(.green)
                 }
+                .swipeActions {
+                    Button {
+                        paymentToRelink = payment
+                    } label: {
+                        Label("Relink", systemImage: "link")
+                    }
+                    .tint(.blue)
+                }
             }
+            Button {
+                showingAddPayment = true
+            } label: {
+                Label("Add payment", systemImage: "plus")
+            }
+        } header: {
+            Text("Recent payments")
+        } footer: {
+            Text("Swipe a payment to move it to another patient.")
         }
     }
 

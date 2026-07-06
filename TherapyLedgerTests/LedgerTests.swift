@@ -107,15 +107,72 @@ struct LedgerTests {
         #expect(totals.receivedMinor == 240_000)
     }
 
-    @Test func fifoCoverageMarksOldestSessionsFirst() throws {
+    @Test func paymentInSameWeekMarksSessionPaid() throws {
         let context = try makeInMemoryContext()
         let patient = makePatient(context: context)
-        let first = addSession(context, patient: patient, on: date(2026, 6, 1), status: .completed)
-        let second = addSession(context, patient: patient, on: date(2026, 6, 8), status: .completed)
-        context.insert(Payment(date: date(2026, 6, 9), amountMinor: 150_000, source: .manual, patient: patient))
+        let session = addSession(context, patient: patient, on: date(2026, 6, 2), status: .completed)
+        let paymentDate = date(2026, 6, 4)
+        context.insert(Payment(date: paymentDate, amountMinor: 120_000, source: .manual, patient: patient))
 
-        let covered = Ledger.coveredSessions(sessions: patient.sessions, payments: patient.payments, asOf: asOf)
-        #expect(covered.contains(ObjectIdentifier(first)))
-        #expect(!covered.contains(ObjectIdentifier(second)))
+        let statuses = Ledger.paymentStatuses(sessions: patient.sessions, payments: patient.payments, asOf: asOf)
+        #expect(statuses[ObjectIdentifier(session)] == .paid(on: paymentDate))
+    }
+
+    @Test func paymentWeeksLaterMarksSessionDelayed() throws {
+        let context = try makeInMemoryContext()
+        let patient = makePatient(context: context)
+        let session = addSession(context, patient: patient, on: date(2026, 6, 2), status: .completed)
+        let paymentDate = date(2026, 6, 16)
+        context.insert(Payment(date: paymentDate, amountMinor: 120_000, source: .manual, patient: patient))
+
+        let statuses = Ledger.paymentStatuses(sessions: patient.sessions, payments: patient.payments, asOf: asOf)
+        #expect(statuses[ObjectIdentifier(session)] == .delayed(on: paymentDate, weeksLate: 2))
+    }
+
+    @Test func lumpSumMarksEachCoveredSessionWithItsOwnDelay() throws {
+        let context = try makeInMemoryContext()
+        let patient = makePatient(context: context)
+        let first = addSession(context, patient: patient, on: date(2026, 6, 2), status: .completed)
+        let second = addSession(context, patient: patient, on: date(2026, 6, 9), status: .completed)
+        // One transfer equal to both fees arrives two weeks after the first session.
+        let paymentDate = date(2026, 6, 16)
+        context.insert(Payment(date: paymentDate, amountMinor: 240_000, source: .manual, patient: patient))
+
+        let statuses = Ledger.paymentStatuses(sessions: patient.sessions, payments: patient.payments, asOf: asOf)
+        #expect(statuses[ObjectIdentifier(first)] == .delayed(on: paymentDate, weeksLate: 2))
+        #expect(statuses[ObjectIdentifier(second)] == .delayed(on: paymentDate, weeksLate: 1))
+    }
+
+    @Test func uncoveredSessionAwaitsPayment() throws {
+        let context = try makeInMemoryContext()
+        let patient = makePatient(context: context)
+        let session = addSession(context, patient: patient, on: date(2026, 6, 2), status: .completed)
+        // Partial payment does not cover the session.
+        context.insert(Payment(date: date(2026, 6, 3), amountMinor: 60_000, source: .manual, patient: patient))
+
+        let statuses = Ledger.paymentStatuses(sessions: patient.sessions, payments: patient.payments, asOf: asOf)
+        #expect(statuses[ObjectIdentifier(session)] == .awaiting)
+    }
+
+    @Test func prepaymentCountsAsPaidNotDelayed() throws {
+        let context = try makeInMemoryContext()
+        let patient = makePatient(context: context)
+        let session = addSession(context, patient: patient, on: date(2026, 6, 2), status: .completed)
+        let paymentDate = date(2026, 5, 20)
+        context.insert(Payment(date: paymentDate, amountMinor: 120_000, source: .manual, patient: patient))
+
+        let statuses = Ledger.paymentStatuses(sessions: patient.sessions, payments: patient.payments, asOf: asOf)
+        #expect(statuses[ObjectIdentifier(session)] == .paid(on: paymentDate))
+    }
+
+    @Test func receivedTotalFiltersByMonthAndYear() throws {
+        let context = try makeInMemoryContext()
+        let patient = makePatient(context: context)
+        context.insert(Payment(date: date(2026, 6, 3), amountMinor: 100_000, source: .manual, patient: patient))
+        context.insert(Payment(date: date(2026, 6, 20), amountMinor: 50_000, source: .manual, patient: patient))
+        context.insert(Payment(date: date(2026, 5, 10), amountMinor: 70_000, source: .manual, patient: patient))
+
+        #expect(Ledger.receivedTotal(payments: patient.payments, in: date(2026, 6, 15), granularity: .month) == 150_000)
+        #expect(Ledger.receivedTotal(payments: patient.payments, in: date(2026, 1, 1), granularity: .year) == 220_000)
     }
 }

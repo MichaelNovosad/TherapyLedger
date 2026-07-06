@@ -12,6 +12,10 @@ struct PaymentEditorView: View {
     @State private var date: Date = .now
     @State private var comment = ""
 
+    init(preselectedPatient: Patient? = nil) {
+        _selectedPatient = State(initialValue: preselectedPatient)
+    }
+
     var body: some View {
         NavigationStack {
             Form {

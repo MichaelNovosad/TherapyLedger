@@ -81,20 +81,88 @@ nonisolated enum Ledger {
         )
     }
 
-    /// FIFO coverage: total payments are applied to billable sessions oldest
-    /// first. A session is "covered" (paid for) if the running payment total
-    /// reaches its fee. Used to show a paid checkmark per session.
-    static func coveredSessions(sessions: [TherapySession], payments: [Payment], asOf: Date = .now) -> Set<ObjectIdentifier> {
-        var remaining = payments.reduce(0) { $0 + $1.amountMinor }
-        var covered: Set<ObjectIdentifier> = []
+    /// FIFO allocation: payments (oldest first) are applied to billable
+    /// sessions (oldest first), splitting lump sums across sessions. A
+    /// session's payment date is the date of the payment that covered its
+    /// last kopiyka; comparing calendar weeks yields paid vs delayed. This is
+    /// how one transfer equal to several session fees marks *each* of those
+    /// sessions as delayed by its own number of weeks.
+    static func paymentStatuses(
+        sessions: [TherapySession],
+        payments: [Payment],
+        asOf: Date = .now,
+        calendar: Calendar = .current
+    ) -> [ObjectIdentifier: SessionPaymentStatus] {
         let billable = sessions
             .filter { $0.isBillable && $0.scheduledAt <= asOf }
             .sorted { $0.scheduledAt < $1.scheduledAt }
+        let sortedPayments = payments.sorted { $0.date < $1.date }
+
+        var statuses: [ObjectIdentifier: SessionPaymentStatus] = [:]
+        var paymentIndex = 0
+        var remainingInPayment = sortedPayments.first?.amountMinor ?? 0
+
         for session in billable {
-            guard remaining >= session.feeMinor else { break }
-            remaining -= session.feeMinor
-            covered.insert(ObjectIdentifier(session))
+            if session.feeMinor == 0 {
+                statuses[ObjectIdentifier(session)] = .paid(on: session.scheduledAt)
+                continue
+            }
+            var needed = session.feeMinor
+            var coveredOn: Date?
+            while needed > 0 && paymentIndex < sortedPayments.count {
+                let taken = min(needed, remainingInPayment)
+                needed -= taken
+                remainingInPayment -= taken
+                if needed == 0 {
+                    coveredOn = sortedPayments[paymentIndex].date
+                }
+                if remainingInPayment == 0 {
+                    paymentIndex += 1
+                    remainingInPayment = paymentIndex < sortedPayments.count
+                        ? sortedPayments[paymentIndex].amountMinor
+                        : 0
+                }
+            }
+            if let coveredOn {
+                let weeksLate = weeksBetween(session.scheduledAt, and: coveredOn, calendar: calendar)
+                statuses[ObjectIdentifier(session)] = weeksLate >= 1
+                    ? .delayed(on: coveredOn, weeksLate: weeksLate)
+                    : .paid(on: coveredOn)
+            } else {
+                statuses[ObjectIdentifier(session)] = .awaiting
+            }
         }
-        return covered
+        return statuses
     }
+
+    /// Whole calendar weeks from the session's week to the payment's week;
+    /// 0 for the same week, negative values (prepayment) are clamped to 0.
+    private static func weeksBetween(_ sessionDate: Date, and paymentDate: Date, calendar: Calendar) -> Int {
+        guard
+            let sessionWeek = calendar.dateInterval(of: .weekOfYear, for: sessionDate)?.start,
+            let paymentWeek = calendar.dateInterval(of: .weekOfYear, for: paymentDate)?.start
+        else { return 0 }
+        return max(0, Int((paymentWeek.timeIntervalSince(sessionWeek) / 604_800).rounded()))
+    }
+
+    /// Sum of payments received within the month or year containing `period`.
+    static func receivedTotal(
+        payments: [Payment],
+        in period: Date,
+        granularity: Calendar.Component,
+        calendar: Calendar = .current
+    ) -> Int {
+        payments
+            .filter { calendar.isDate($0.date, equalTo: period, toGranularity: granularity) }
+            .reduce(0) { $0 + $1.amountMinor }
+    }
+}
+
+nonisolated enum SessionPaymentStatus: Equatable {
+    /// No payment has fully covered this session yet.
+    case awaiting
+    /// Covered within the session's calendar week (or prepaid).
+    case paid(on: Date)
+    /// Covered in a later week than the session's.
+    case delayed(on: Date, weeksLate: Int)
 }

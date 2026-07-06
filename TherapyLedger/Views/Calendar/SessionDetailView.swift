@@ -6,13 +6,16 @@ struct SessionDetailView: View {
     @Environment(\.modelContext) private var context
     @Environment(\.dismiss) private var dismiss
     @State private var showingReschedule = false
+    @State private var confirmingEndSeries = false
+    @AppStorage(TimeZoneSettings.dualEnabledKey) private var dualTimeZones = false
+    @AppStorage(TimeZoneSettings.primaryKey) private var primaryZone = TimeZoneSettings.defaultIdentifier
+    @AppStorage(TimeZoneSettings.secondaryKey) private var secondaryZone = TimeZoneSettings.defaultIdentifier
 
     private var currency: String { session.patient?.currencyCode ?? "UAH" }
 
-    private var isCovered: Bool {
-        guard let patient = session.patient else { return false }
-        return Ledger.coveredSessions(sessions: patient.sessions, payments: patient.payments)
-            .contains(ObjectIdentifier(session))
+    private var paymentStatus: SessionPaymentStatus {
+        guard let patient = session.patient else { return .awaiting }
+        return Ledger.paymentStatuses(sessions: patient.sessions, payments: patient.payments)[ObjectIdentifier(session)] ?? .awaiting
     }
 
     var body: some View {
@@ -20,11 +23,21 @@ struct SessionDetailView: View {
             Section {
                 LabeledContent("Patient", value: session.patient?.name ?? "—")
                 LabeledContent("Date") {
-                    Text(session.scheduledAt.formatted(date: .abbreviated, time: .shortened))
+                    VStack(alignment: .trailing, spacing: 2) {
+                        Text(session.scheduledAt.formatted(date: .abbreviated, time: dualTimeZones ? .omitted : .shortened))
+                        if dualTimeZones {
+                            Text(TimeZoneSettings.dualLabel(session.scheduledAt, primary: primaryZone, secondary: secondaryZone))
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
                 }
                 LabeledContent("Duration", value: "\(session.durationMinutes) min")
                 LabeledContent("Fee") {
                     MoneyText(minor: session.feeMinor, currency: currency)
+                }
+                if let slot = session.slot {
+                    LabeledContent("Series", value: slot.scheduleLabel)
                 }
             }
 
@@ -44,25 +57,13 @@ struct SessionDetailView: View {
             }
 
             if session.isBillable {
-                Section("Payment") {
-                    if isCovered {
-                        Label("Covered by received payments", systemImage: "checkmark.seal.fill")
-                            .foregroundStyle(.green)
-                    } else {
-                        Label("Not covered yet", systemImage: "hourglass")
-                            .foregroundStyle(.orange)
-                    }
-                    if let patient = session.patient {
-                        LabeledContent("Patient balance") {
-                            BalanceChip(balance: patient.balance, currency: currency)
-                        }
-                    }
-                }
+                paymentSection
             }
 
             if session.wasRescheduled {
                 Section("Reschedule history") {
-                    ForEach(session.previousDates, id: \.self) { date in
+                    // A session can be moved to the same date twice, so key by position.
+                    ForEach(Array(session.previousDates.enumerated()), id: \.offset) { _, date in
                         Label {
                             Text(date.formatted(date: .abbreviated, time: .shortened))
                         } icon: {
@@ -79,16 +80,64 @@ struct SessionDetailView: View {
             }
 
             Section {
+                Button("End series from here", role: .destructive) {
+                    confirmingEndSeries = true
+                }
                 Button("Delete session", role: .destructive) {
-                    context.delete(session)
+                    SchedulingService.delete(session: session, context: context)
                     dismiss()
                 }
+            } footer: {
+                Text("Deleting a future scheduled session removes only that occurrence — the series continues and will not recreate it. Ending the series removes this and all future scheduled sessions and pauses the recurring slot. Past completed or missed sessions are kept.")
             }
         }
         .navigationTitle("Session")
         .navigationBarTitleDisplayMode(.inline)
         .sheet(isPresented: $showingReschedule) {
             RescheduleSheet(session: session)
+        }
+        .confirmationDialog(
+            "Delete this and all future scheduled sessions?",
+            isPresented: $confirmingEndSeries,
+            titleVisibility: .visible
+        ) {
+            Button("End series", role: .destructive) {
+                SchedulingService.endSeries(after: session, context: context)
+                dismiss()
+            }
+        }
+    }
+
+    private var paymentSection: some View {
+        Section {
+            switch paymentStatus {
+            case .paid(let date):
+                Label {
+                    Text("Paid — received \(date.formatted(date: .abbreviated, time: .omitted))")
+                } icon: {
+                    Image(systemName: "checkmark.seal.fill")
+                }
+                .foregroundStyle(.green)
+            case .delayed(let date, let weeksLate):
+                Label {
+                    Text("Delayed — received \(date.formatted(date: .abbreviated, time: .omitted)), \(weeksLate) week\(weeksLate == 1 ? "" : "s") late")
+                } icon: {
+                    Image(systemName: "clock.badge.exclamationmark.fill")
+                }
+                .foregroundStyle(.orange)
+            case .awaiting:
+                Label("Awaiting payment", systemImage: "hourglass")
+                    .foregroundStyle(.red)
+            }
+            if let patient = session.patient {
+                LabeledContent("Patient balance") {
+                    BalanceChip(balance: patient.balance, currency: currency)
+                }
+            }
+        } header: {
+            Text("Payment")
+        } footer: {
+            Text("A session counts as paid when payments received in its week cover it. Payments arriving in later weeks mark it as delayed.")
         }
     }
 }

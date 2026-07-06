@@ -58,7 +58,9 @@ struct PatientEditorView: View {
         let feeMinor = fee.map(Money.minorUnits(from:)) ?? 0
         if let patient {
             patient.name = trimmedName
-            patient.sessionFeeMinor = feeMinor
+            if patient.sessionFeeMinor != feeMinor {
+                SchedulingService.updateFee(for: patient, to: feeMinor)
+            }
             patient.chargesForMissedSessions = chargesForMissed
             patient.notes = notes
         } else {

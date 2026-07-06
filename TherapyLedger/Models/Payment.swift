@@ -26,6 +26,9 @@ final class Payment {
     var comment: String?
     var createdAt: Date = Date()
     var patient: Patient?
+    /// Which Monobank account received this payment (v2, additive).
+    var accountId: String?
+    var accountLabel: String?
 
     init(
         date: Date,
@@ -36,7 +39,9 @@ final class Payment {
         senderName: String? = nil,
         senderIban: String? = nil,
         comment: String? = nil,
-        patient: Patient? = nil
+        patient: Patient? = nil,
+        accountId: String? = nil,
+        accountLabel: String? = nil
     ) {
         self.date = date
         self.amountMinor = amountMinor
@@ -48,6 +53,8 @@ final class Payment {
         self.comment = comment
         self.patient = patient
         self.createdAt = Date()
+        self.accountId = accountId
+        self.accountLabel = accountLabel
     }
 
     var source: PaymentSource {

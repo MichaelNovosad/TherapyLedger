@@ -3,6 +3,7 @@ import SwiftData
 
 @main
 struct TherapyLedgerApp: App {
+    @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     let container: ModelContainer
 
     init() {

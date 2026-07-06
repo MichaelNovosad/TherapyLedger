@@ -156,24 +156,42 @@ struct CalendarScreen: View {
         } label: {
             Label("Cancel session", systemImage: "xmark.circle")
         }
+        if session.status == .scheduled {
+            Button(role: .destructive) {
+                SchedulingService.skipOccurrence(of: session, context: context)
+            } label: {
+                Label("Skip this occurrence", systemImage: "calendar.badge.minus")
+            }
+        }
     }
 }
 
 struct SessionRow: View {
     let session: TherapySession
+    @AppStorage(TimeZoneSettings.dualEnabledKey) private var dualTimeZones = false
+    @AppStorage(TimeZoneSettings.primaryKey) private var primaryZone = TimeZoneSettings.defaultIdentifier
+    @AppStorage(TimeZoneSettings.secondaryKey) private var secondaryZone = TimeZoneSettings.defaultIdentifier
+
+    private var timeText: String {
+        if dualTimeZones {
+            TimeZoneSettings.dualLabel(session.scheduledAt, primary: primaryZone, secondary: secondaryZone)
+        } else {
+            session.scheduledAt.formatted(date: .omitted, time: .shortened)
+        }
+    }
 
     var body: some View {
         HStack {
             VStack(alignment: .leading, spacing: 3) {
                 Text(session.patient?.name ?? "No patient")
                     .font(.body.weight(.medium))
-                Text(session.scheduledAt.formatted(date: .omitted, time: .shortened))
+                Text(timeText)
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             }
             Spacer()
             VStack(alignment: .trailing, spacing: 3) {
-                StatusBadge(status: session.status, wasRescheduled: session.wasRescheduled)
+                StatusMenuBadge(session: session)
                 MoneyText(minor: session.feeMinor, currency: session.patient?.currencyCode ?? "UAH")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)

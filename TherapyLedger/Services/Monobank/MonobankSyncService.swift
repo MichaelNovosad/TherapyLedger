@@ -17,23 +17,107 @@ struct SyncResult {
         }
         return parts.joined(separator: ", ")
     }
+
+    mutating func merge(_ other: SyncResult) {
+        imported += other.imported
+        matched += other.matched
+        skipped += other.skipped
+    }
 }
 
 /// Pulls incoming transfers from the linked Monobank account, deduplicates by
 /// transaction id, and links each payment to a patient via confirmed payer
 /// aliases. Unmatched payments land in the "needs linking" inbox.
 enum MonobankSyncService {
+    /// Stay just under the API's 31 days + 1 hour statement window limit.
+    private nonisolated static let statementWindow: TimeInterval = 31 * 86_400 - 3_600
+
     static func sync(
         context: ModelContext,
         token: String,
         accountId: String,
+        accountLabel: String? = nil,
         now: Date = .now
     ) async throws -> SyncResult {
         let client = MonobankClient(token: token)
-        // Stay just under the API's 31 days + 1 hour window limit.
         let from = now.addingTimeInterval(-(31 * 86_400 - 60))
         let items = try await client.statement(accountId: accountId, from: from, to: now)
+        return try importItems(items, context: context, accountId: accountId, accountLabel: accountLabel)
+    }
 
+    /// Loads up to a year of past transactions for statistics, one 31-day
+    /// window at a time (the API allows 1 request/minute). Progress is
+    /// persisted after every window, so an interrupted run resumes where it
+    /// stopped instead of starting over.
+    static func backfillYearHistory(
+        context: ModelContext,
+        token: String,
+        accountId: String,
+        accountLabel: String? = nil,
+        now: Date = .now,
+        progress: (Int, Int) -> Void = { _, _ in }
+    ) async throws -> SyncResult {
+        let client = MonobankClient(token: token)
+        let defaults = UserDefaults.standard
+        let savedOldest = defaults.double(forKey: SettingsKeys.monobankHistoryOldest)
+        let coveredUntil = savedOldest > 0 ? Date(timeIntervalSince1970: savedOldest) : nil
+        let windows = backfillWindows(coveredUntil: coveredUntil, now: now)
+
+        var total = SyncResult()
+        for (index, window) in windows.enumerated() {
+            progress(index + 1, windows.count)
+            let items = try await statementWithRetry(
+                client: client, accountId: accountId, from: window.from, to: window.to
+            )
+            total.merge(try importItems(items, context: context, accountId: accountId, accountLabel: accountLabel))
+            defaults.set(window.from.timeIntervalSince1970, forKey: SettingsKeys.monobankHistoryOldest)
+            if index < windows.count - 1 {
+                try await Task.sleep(for: .seconds(61))
+            }
+        }
+        return total
+    }
+
+    /// Consecutive statement windows from just below the regular sync range
+    /// back to one year before `now`. Empty when the year is already covered.
+    nonisolated static func backfillWindows(
+        coveredUntil: Date?,
+        now: Date
+    ) -> [(from: Date, to: Date)] {
+        let oldestTarget = now.addingTimeInterval(-365 * 86_400)
+        var upper = coveredUntil ?? now.addingTimeInterval(-(31 * 86_400 - 60))
+        var windows: [(from: Date, to: Date)] = []
+        while upper > oldestTarget {
+            let lower = max(oldestTarget, upper.addingTimeInterval(-statementWindow))
+            windows.append((from: lower, to: upper))
+            upper = lower
+        }
+        return windows
+    }
+
+    private static func statementWithRetry(
+        client: MonobankClient,
+        accountId: String,
+        from: Date,
+        to: Date,
+        attempts: Int = 3
+    ) async throws -> [MonoStatementItem] {
+        for attempt in 1...attempts {
+            do {
+                return try await client.statement(accountId: accountId, from: from, to: to)
+            } catch MonobankError.rateLimited where attempt < attempts {
+                try await Task.sleep(for: .seconds(61))
+            }
+        }
+        throw MonobankError.rateLimited
+    }
+
+    private static func importItems(
+        _ items: [MonoStatementItem],
+        context: ModelContext,
+        accountId: String,
+        accountLabel: String?
+    ) throws -> SyncResult {
         let existingMono = try context.fetch(
             FetchDescriptor<Payment>(predicate: #Predicate { $0.monoId != nil })
         )
@@ -61,7 +145,9 @@ enum MonobankSyncService {
                 senderName: item.counterName ?? senderFromDescription(item.description),
                 senderIban: item.counterIban,
                 comment: item.comment,
-                patient: patient
+                patient: patient,
+                accountId: accountId,
+                accountLabel: accountLabel
             )
             context.insert(payment)
             result.imported += 1

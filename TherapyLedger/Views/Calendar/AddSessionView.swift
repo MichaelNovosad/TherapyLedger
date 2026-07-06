@@ -11,6 +11,7 @@ struct AddSessionView: View {
     @State private var date: Date
     @State private var durationMinutes = 50
     @State private var fee: Decimal?
+    @State private var repeatFrequency: SlotFrequency?
 
     init(initialDate: Date) {
         var components = Calendar.current.dateComponents([.year, .month, .day], from: initialDate)
@@ -33,6 +34,18 @@ struct AddSessionView: View {
                 Stepper("Duration: \(durationMinutes) min", value: $durationMinutes, in: 20...180, step: 5)
                 TextField("Fee", value: $fee, format: .number)
                     .keyboardType(.decimalPad)
+                Section {
+                    Picker("Repeats", selection: $repeatFrequency) {
+                        Text("Does not repeat").tag(nil as SlotFrequency?)
+                        ForEach(SlotFrequency.allCases) { frequency in
+                            Text(frequency.label).tag(frequency as SlotFrequency?)
+                        }
+                    }
+                } footer: {
+                    if repeatFrequency != nil {
+                        Text("Creates a recurring slot starting from this session; future occurrences are generated automatically and appear under the patient's recurring schedule.")
+                    }
+                }
             }
             .navigationTitle("New session")
             .navigationBarTitleDisplayMode(.inline)
@@ -58,12 +71,23 @@ struct AddSessionView: View {
     private func addSession() {
         guard let patient = selectedPatient else { return }
         let feeMinor = fee.map(Money.minorUnits(from:)) ?? patient.sessionFeeMinor
-        context.insert(TherapySession(
-            patient: patient,
-            scheduledAt: date,
-            durationMinutes: durationMinutes,
-            feeMinor: feeMinor
-        ))
+        if let repeatFrequency {
+            SchedulingService.createSeries(
+                patient: patient,
+                firstDate: date,
+                durationMinutes: durationMinutes,
+                feeMinor: feeMinor,
+                frequency: repeatFrequency,
+                context: context
+            )
+        } else {
+            context.insert(TherapySession(
+                patient: patient,
+                scheduledAt: date,
+                durationMinutes: durationMinutes,
+                feeMinor: feeMinor
+            ))
+        }
         dismiss()
     }
 }

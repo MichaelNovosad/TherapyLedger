@@ -79,6 +79,22 @@ struct MonobankDecodingTests {
         #expect(CurrencyCodeMap.iso(978) == "EUR")
     }
 
+    @Test func decodesNBURatesAndConverts() throws {
+        let json = """
+        [{"r030":840,"txt":"Долар США","rate":44.05,"cc":"USD","exchangedate":"06.07.2026"}]
+        """
+        let rates = try JSONDecoder().decode([NBURate].self, from: Data(json.utf8))
+        let rate = try #require(rates.first)
+        #expect(rate.cc == "USD")
+        #expect(rate.rate == 44.05)
+
+        // ₴4,405.00 at 44.05 ₴/$ → exactly $100.00.
+        #expect(ExchangeRateService.convert(minorUAH: 440_500, rate: Decimal(rate.rate)) == 10_000)
+        // Different day, different rate: same hryvnia amount converts differently.
+        #expect(ExchangeRateService.convert(minorUAH: 440_500, rate: 45) == 9_789)
+        #expect(ExchangeRateService.convert(minorUAH: 100_000, rate: 0) == 0)
+    }
+
     @Test func extractsSenderFromDescription() {
         #expect(MonobankSyncService.senderFromDescription("Від: Марія Коваль") == "Марія Коваль")
         #expect(MonobankSyncService.senderFromDescription("From: John") == "John")

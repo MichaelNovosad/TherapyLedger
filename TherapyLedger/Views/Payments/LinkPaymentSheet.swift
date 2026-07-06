@@ -20,63 +20,42 @@ struct LinkPaymentSheet: View {
                 } footer: {
                     Text("Future transfers from the same sender will be linked automatically.")
                 }
-                Section("Link to patient") {
+                Section(payment.isLinked ? "Move to another patient" : "Link to patient") {
                     ForEach(patients) { patient in
                         Button {
-                            link(to: patient)
+                            PaymentLinker.link(payment, to: patient, rememberPayer: rememberPayer, context: context)
+                            dismiss()
                         } label: {
                             HStack {
                                 Text(patient.name)
                                 Spacer()
-                                BalanceChip(balance: patient.balance, currency: patient.currencyCode)
+                                if payment.patient === patient {
+                                    Image(systemName: "checkmark")
+                                        .foregroundStyle(Color.accentColor)
+                                } else {
+                                    BalanceChip(balance: patient.balance, currency: patient.currencyCode)
+                                }
                             }
                         }
                         .buttonStyle(.plain)
                     }
                 }
+                if payment.isLinked {
+                    Section {
+                        Button("Unlink from patient", role: .destructive) {
+                            payment.patient = nil
+                            dismiss()
+                        }
+                    }
+                }
             }
-            .navigationTitle("Link payment")
+            .navigationTitle(payment.isLinked ? "Relink payment" : "Link payment")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Cancel") { dismiss() }
                 }
             }
-        }
-    }
-
-    private func link(to patient: Patient) {
-        payment.patient = patient
-
-        if rememberPayer {
-            var newAliases: [PayerAlias] = []
-            if let iban = payment.senderIban, !iban.isEmpty {
-                newAliases.append(PayerAlias(matchText: iban, kind: .iban, patient: patient))
-            }
-            if let name = payment.senderName, !name.isEmpty {
-                newAliases.append(PayerAlias(matchText: name, kind: .senderName, patient: patient))
-            }
-            for alias in newAliases {
-                context.insert(alias)
-            }
-            relinkPendingPayments(with: newAliases)
-        }
-        dismiss()
-    }
-
-    /// Apply the just-confirmed aliases to any other unlinked payments.
-    private func relinkPendingPayments(with aliases: [PayerAlias]) {
-        guard !aliases.isEmpty else { return }
-        let pending = (try? context.fetch(
-            FetchDescriptor<Payment>(predicate: #Predicate { $0.patient == nil })
-        )) ?? []
-        for other in pending {
-            other.patient = PaymentMatcher.match(
-                senderName: other.senderName,
-                senderIban: other.senderIban,
-                description: other.comment,
-                aliases: aliases
-            )
         }
     }
 }
